@@ -80,6 +80,7 @@ class RandomLookupsHdf5Op;
 #ifdef ENABLE_FASTBIT
 class FastBitScanOp;
 #endif
+class WriteOp;
 
 class Visitor {
 	public:
@@ -128,6 +129,7 @@ class Visitor {
 #ifdef ENABLE_FASTBIT
 		virtual void visit(FastBitScanOp* op) = 0;
 #endif
+		virtual void visit(WriteOp* op) = 0;
 
 		virtual ~Visitor() { }
 };

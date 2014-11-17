@@ -92,6 +92,7 @@ class SimpleVisitor : public Visitor {
 #ifdef ENABLE_FASTBIT
 		void visit(FastBitScanOp* op) { this->simplevisit(op); }
 #endif
+		void visit(WriteOp* op) { this->simplevisit(op); }
 };
 
 class RecursiveDestroyVisitor : public SimpleVisitor {
@@ -181,6 +182,7 @@ class PrettyPrinterVisitor : public Visitor {
 #endif
 
 		void visit(IntGeneratorOp* op);
+		void visit(WriteOp* op);
 
 	private:
 		void printSortMergeJoin(SortMergeJoinOp* op);

@@ -201,6 +201,8 @@ void constructsubtree(
 			tmp = new ThreadIdPrependOp();
 		else if (type == "partition")
 			tmp = new PartitionOp();
+		else if (type == "write")
+			tmp = new WriteOp();
 		else
 		{
 			// It's a user-defined type?

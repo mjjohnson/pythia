@@ -511,6 +511,23 @@ class ParallelScanOp : public PartitionedScanOp {
 };
 
 /**
+ * Writes tuples to a file.
+ */
+class WriteOp : public virtual SingleInputOp
+{
+	public:
+		friend class PrettyPrinterVisitor;
+		virtual void accept(Visitor* v) { v->visit(this); }
+
+		inline virtual void init(libconfig::Config& root, libconfig::Setting& node)
+		{
+			SingleInputOp::init(root, node);
+			schema = nextOp->getOutSchema();
+		}
+		GetNextResultT getNext(unsigned short threadid);
+};
+
+/**
  * Synchronization class: spawns more threads for the specified subtree.
  * Support for single-threaded consumer only, with threadid 0. 
  */

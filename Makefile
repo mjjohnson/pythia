@@ -86,6 +86,7 @@ FILES = schema.o hash.o \
 	operators/sortandrangepartition.o \
 	operators/partition.o \
 	operators/indexjoin.o \
+	operators/write.o \
 
 ifneq ($(findstring ENABLE_HDF5,$(CPPFLAGS)),)
 FILES += \
@@ -177,6 +178,7 @@ UNIT_TESTS += \
 DRIVERS = \
 	drivers/executequery \
 	drivers/sample_queries/q1/query1 \
+	drivers/sample_queries/q2/query2 \
 
 # yes, two lines are necessary
 define nl

@@ -11,3 +11,8 @@
 *.lai
 *.la
 *.a
+
+dist/
+html/
+.*.swo
+.*.swp

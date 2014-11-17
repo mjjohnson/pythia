@@ -1223,3 +1223,9 @@ void PrettyPrinterVisitor::visit(FastBitScanOp* op)
 	}
 }
 #endif // ENABLE_FASTBIT
+
+void PrettyPrinterVisitor::visit(WriteOp* op)
+{
+	printIdent();
+	cout << "Write Tuples" << endl;
+}
