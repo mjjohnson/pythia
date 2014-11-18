@@ -87,6 +87,7 @@ FILES = schema.o hash.o \
 	operators/partition.o \
 	operators/indexjoin.o \
 	operators/write.o \
+	operators/cube.o \
 
 ifneq ($(findstring ENABLE_HDF5,$(CPPFLAGS)),)
 FILES += \

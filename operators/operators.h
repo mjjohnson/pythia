@@ -359,6 +359,129 @@ class AggregateCount : public GenericAggregate {
 
 };
 
+/**
+ * Cube class.
+ * 
+ * Parameters:
+ * \li \c field a number specifying the group by key. First attribute in tuple
+ * is zero.
+ * \li \c fields a vector specifying a composite group by key. First attribute
+ * in tuple is zero.
+ * \li \c presorted if config attribute exists, performs on-the-fly merge
+ * aggreagation. Not yet implemented.
+ * \li \c global if config attribute exists, performs hash-based aggregation on
+ * a hash table shared by all threads.
+ * \li \c threads (mandatory if "global" is set) specifies number of threads to
+ * synchronize with on barriers.
+ */
+class CubeOp : public virtual SingleInputOp {
+	public:
+		friend class PrettyPrinterVisitor;
+
+		CubeOp() 
+			: aggregationmode(Unset), threads(0)
+		{}
+		virtual ~CubeOp() { }
+
+		virtual void init(libconfig::Config& root, libconfig::Setting& node);
+		virtual void threadInit(unsigned short threadid);
+		virtual ResultCode scanStart(unsigned short threadid,
+			Page* indexdatapage, Schema& indexdataschema);
+		virtual GetNextResultT getNext(unsigned short threadid);
+
+		/**
+		 * Scan is started and stopped inside \a scanStart.
+		 */
+		virtual ResultCode scanStop(unsigned short threadid)
+		{
+			return Ready;
+		}
+
+		virtual void threadClose(unsigned short threadid);
+		virtual void destroy();
+	
+		virtual void accept(Visitor* v) { v->visit(this); }
+
+		/**
+		 * Returns reference to user-defined aggregation schema.
+		 */
+		virtual Schema& foldinit(libconfig::Config& root, libconfig::Setting& node);
+
+		/**
+		 * Called when a new fold starts. \a output is guaranteed to be as
+		 * wide as the user-defined schema returned from \a foldinit.
+		 */
+		virtual void foldstart(void* output, void* tuple);
+
+		/**
+		 * Reads the partial result in \a partialresult and the current 
+		 * \a tuple, computes user-defined function and writes result back to
+		 * \a partialresult. \a partialresult is as wide as the user-defined
+		 * schema returned from \a foldinit.
+		 */
+		virtual void fold(void* partialresult, void* tuple);
+
+		/**
+		 * Aggregates bucket utilization statistics from all hash tables, as
+		 * reported by HashTable::statBuckets().
+		 */
+		vector<unsigned int> statAggBuckets();
+
+		/**
+		 * Aggregates hash table spill statistics from all hash tables, as
+		 * reported by HashTable::statAggSpills().
+		 */
+		unsigned long statAggSpills();
+
+	private:
+		enum Mode 
+		{
+			Unset,
+			OnTheFly,
+			ThreadLocal,
+			Global
+		};
+
+		void remember(void* tuple, HashTable::Iterator& it, unsigned short threadid);
+
+		vector<unsigned short> aggfields;
+		ConjunctionEqualsEvaluator comparator;
+		TupleHasher hashfn;
+		Mode aggregationmode;
+		unsigned short threads;
+		PThreadLockCVBarrier barrier;
+
+		/**
+		 * Either one hashtable per thread if thread-local aggregation, or 
+		 * a single hashtable if global aggregation.
+		 */
+		vector<HashTable> hashtable;
+
+		class State {
+			public:
+				State(HashTable::Iterator it)
+					: iterator(it), bucket(0), startoffset(0), endoffset(0), step(0)
+				{ }
+
+				char padding1[64];
+				HashTable::Iterator iterator;
+				unsigned int bucket;
+
+				unsigned int startoffset;
+				unsigned int endoffset;
+				unsigned int step;
+
+				char padding2[64];
+		};
+		vector<State> state;
+
+		/** Output buffers. Class owns the memory. */
+		vector<Page*> output;
+		Schema aggregateschema;
+		unsigned int sumfieldno;
+		Schema inschema;
+};
+
 class DualInputOp : public virtual Operator {
 	public:
 		virtual void accept(Visitor* v) { v->visit(this); }

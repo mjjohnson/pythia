@@ -1229,3 +1229,23 @@ void PrettyPrinterVisitor::visit(WriteOp* op)
 	printIdent();
 	cout << "Write Tuples" << endl;
 }
+
+void PrettyPrinterVisitor::visit(CubeOp* op) {
+	printIdent();
+	cout << "CubeOp ("
+		<< "agg-fields=" << printvecaddone(op->aggfields) 
+		<< ")" << endl; 
+
+	for (int i=0; i<MAX_THREADS; ++i)
+	{
+		if (op->hashtable.at(i).nbuckets == 0)
+			continue;
+
+		printIdent();
+		cout << ". Thread " << setw(2) << setfill('0') << i << ": ";
+		printHashTableStats(op->hashtable[i]);
+	}
+
+	op->nextOp->accept(this);
+}
+
