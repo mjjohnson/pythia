@@ -478,7 +478,7 @@ class CubeOp : public virtual SingleInputOp {
 
 				char padding2[64];
 		};
-		vector<State> state;
+		vector< vector<State> > states;
 
 		/** Output buffers. Class owns the memory. */
 		vector<Page*> output;
