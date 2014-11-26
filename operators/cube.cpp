@@ -57,11 +57,15 @@ void CubeOp::init(libconfig::Config& root, libconfig::Setting& cfg)
 	//
 	libconfig::Setting& field = cfg["fields"];
 	dbgassert(field.isAggregate());
-
-	for (int i=0; i<field.getLength(); ++i)
+	for (int i=field.getLength()-1; i>=0; --i)
 	{
-		int fieldno = field[i];
-		aggfields.push_back(fieldno);
+	    vector<unsigned short> fields;
+	    for (int j=0; j<=i; ++j)
+	    {
+		int fieldno = field[j];
+		fields.push_back(fieldno);
+	    }
+	    aggfields.push_back(fields);
 	}
 
 	// Read user-defined schema.
@@ -71,9 +75,9 @@ void CubeOp::init(libconfig::Config& root, libconfig::Setting& cfg)
 
 	// Get data type of aggregation attributes, then add user-defined schema.
 	//
-	for (unsigned int i=0; i<aggfields.size(); ++i)
+	for (unsigned int i=0; i<aggfields[0].size(); ++i)
 	{
-		ColumnSpec cs = nextOp->getOutSchema().get(aggfields[i]);
+		ColumnSpec cs = nextOp->getOutSchema().get(aggfields[0][i]);
 		schema.add(cs);
 	}
 	for (unsigned int i=0; i<uds.columns(); ++i)
@@ -84,11 +88,11 @@ void CubeOp::init(libconfig::Config& root, libconfig::Setting& cfg)
 	// Create object for comparisons.
 	//
 	vector <unsigned short> tempvec;	// [0,1,2,...]
-	for (unsigned int i=0; i<aggfields.size(); ++i)
+	for (unsigned int i=0; i<aggfields[0].size(); ++i)
 	{
 		tempvec.push_back(i);
 	}
-	comparator.init(schema, nextOp->getOutSchema(), tempvec, aggfields);
+	comparator.init(schema, nextOp->getOutSchema(), tempvec, aggfields[0]);
 
 	assert(aggregationmode == Unset);
 
@@ -116,8 +120,10 @@ void CubeOp::init(libconfig::Config& root, libconfig::Setting& cfg)
 			<< "NUMA disabled at compile." << endl;
 #endif
 
+		vector<HashTable> hashtable;
 		hashtable.push_back( HashTable() );
-		hashtable[0].init(
+		hashtables.push_back( hashtable );
+		hashtables[0][0].init(
 			hashfn.buckets(),	// number of hash buckets
 			schema.getTupleSize()*4, // space for each bucket
 			schema.getTupleSize(),	 // size of each tuple
@@ -131,7 +137,9 @@ void CubeOp::init(libconfig::Config& root, libconfig::Setting& cfg)
 		aggregationmode = ThreadLocal;
 		for (int i=0; i<MAX_THREADS; ++i) 
 		{
+			vector<HashTable> hashtable;
 			hashtable.push_back( HashTable() );
+			hashtables.push_back( hashtable );
 		}
 	}
 
@@ -149,18 +157,22 @@ void CubeOp::threadInit(unsigned short threadid)
 	switch(aggregationmode)
 	{
 		case ThreadLocal:
-			hashtable[threadid].init(
-				hashfn.buckets(),	// number of hash buckets
-				schema.getTupleSize()*4, // space for each bucket
-				schema.getTupleSize(),	 // size of each tuple
-				vector<char>(),	  // always allocate locally
-				this);
-			hashtable[threadid].bucketclear(0, 1);
+			for (int i=0; i<hashtables[threadid].size(); i++) {
+				hashtables[threadid][i].init(
+					hashfn.buckets(),	// number of hash buckets
+					schema.getTupleSize()*4, // space for each bucket
+					schema.getTupleSize(),	 // size of each tuple
+					vector<char>(),	  // always allocate locally
+					this);
+				hashtables[threadid][0].bucketclear(0, 1);
+				}
 			break;
 
 		case Global:
-			hashtable[0].bucketclear(threadid, threads);
-			barrier.Arrive();
+			for (int i=0; i<hashtables[0].size(); i++) {
+				hashtables[0][i].bucketclear(threadid, threads);
+				barrier.Arrive();
+			}
 			break;
 
 		default:
@@ -171,7 +183,7 @@ void CubeOp::threadInit(unsigned short threadid)
 	{
 		htid = threadid;
 	}
-	state[threadid] = State(hashtable[htid].createIterator());
+	state[threadid] = State(hashtables[htid][0].createIterator());
 }
 
 void CubeOp::threadClose(unsigned short threadid)
@@ -184,13 +196,17 @@ void CubeOp::threadClose(unsigned short threadid)
 	switch(aggregationmode)
 	{
 		case ThreadLocal:
-			hashtable[threadid].bucketclear(0, 1);
-			hashtable[threadid].destroy();
+			for (int i=0; i<hashtables[threadid].size(); i++) {
+				hashtables[threadid][i].bucketclear(0, 1);
+				hashtables[threadid][i].destroy();
+			}
 			break;
 
 		case Global:
 			barrier.Arrive();
-			hashtable[0].bucketclear(threadid, threads);
+			for (int i=0; i<hashtables[0].size(); i++) {
+				hashtables[0][i].bucketclear(threadid, threads);
+			}
 			break;
 
 		default:
@@ -200,17 +216,23 @@ void CubeOp::threadClose(unsigned short threadid)
 
 void CubeOp::destroy()
 {
-	if (aggregationmode == Global)
-		hashtable[0].destroy();
+	if (aggregationmode == Global) {
+		for (int i=0; i<hashtables[0].size(); i++) {
+			hashtables[0][i].destroy();
+		}
+	}
 	hashfn.destroy();
-	hashtable.clear();
+	for (int i=0; i<hashtables.size(); i++) {
+		hashtables[i].clear();
+	}
+	hashtables.clear();
 	aggregationmode = Unset;
 }
 
 void CubeOp::remember(void* tuple, HashTable::Iterator& it, unsigned short htid)
 {
 	void* candidate;
-	int totalaggfields = aggfields.size();
+	int totalaggfields = aggfields[0].size();
 	Schema& inschema = nextOp->getOutSchema();
 
 	// Identify key and hash it to find the hashtable bucket.
@@ -218,9 +240,9 @@ void CubeOp::remember(void* tuple, HashTable::Iterator& it, unsigned short htid)
 	unsigned int h = hashfn.hash(tuple);
 	if (aggregationmode == Global)
 	{
-		hashtable[htid].lockbucket(h);
+		hashtables[htid][0].lockbucket(h);
 	}
-	hashtable[htid].placeIterator(it, h);
+	hashtables[htid][0].placeIterator(it, h);
 
 	// Scan bucket.
 	//
@@ -237,17 +259,17 @@ void CubeOp::remember(void* tuple, HashTable::Iterator& it, unsigned short htid)
 
 	// If no match found on hash chain, allocate space and add tuple.
 	//
-	candidate = hashtable[htid].allocate(h, this);
+	candidate = hashtables[htid][0].allocate(h, this);
 	for (int i=0; i<totalaggfields; ++i)
 	{
-		schema.writeData(candidate, i, inschema.calcOffset(tuple, aggfields[i]));
+		schema.writeData(candidate, i, inschema.calcOffset(tuple, aggfields[0][i]));
 	}
 	foldstart(schema.calcOffset(candidate, totalaggfields), tuple);
 
 unlockandexit:
 	if (aggregationmode == Global)
 	{
-		hashtable[htid].unlockbucket(h);
+		hashtables[htid][0].unlockbucket(h);
 	}
 }
 
@@ -263,7 +285,7 @@ Operator::ResultCode CubeOp::scanStart(unsigned short threadid,
 	{
 		htid = threadid;
 	}
-	HashTable::Iterator htit = hashtable[htid].createIterator();
+	HashTable::Iterator htit = hashtables[htid][0].createIterator();
 	ResultCode rescode;
 	
 	rescode = nextOp->scanStart(threadid, indexdatapage, indexdataschema);
@@ -379,7 +401,7 @@ Operator::ResultCode CubeOp::scanStart(unsigned short threadid,
 	state[threadid].endoffset = endoffset;
 
 
-	hashtable[htid].placeIterator(state[threadid].iterator, state[threadid].bucket);
+	hashtables[htid][0].placeIterator(state[threadid].iterator, state[threadid].bucket);
 
 	// If scan failed, return Error. Otherwise return what scanClose returned.
 	//
@@ -445,11 +467,11 @@ Operator::GetNextResultT CubeOp::getNext(unsigned short threadid)
 		//
 		if ((i+step) < endoffset)
 		{
-			hashtable[htid].placeIterator(it, (i+step));
+			hashtables[htid][0].placeIterator(it, (i+step));
 		}
 		else
 		{
-			hashtable[htid].placeIterator(it, 0);
+			hashtables[htid][0].placeIterator(it, 0);
 		}
 	}
 
@@ -460,9 +482,9 @@ vector<unsigned int> CubeOp::statAggBuckets()
 {
 	vector<unsigned int> ret;
 
-	for (unsigned int i=0; i<hashtable.size(); ++i)
+	for (unsigned int i=0; i<hashtables[0].size(); ++i)
 	{
-		vector<unsigned int> htstats = hashtable.at(i).statBuckets();
+		vector<unsigned int> htstats = hashtables[0].at(i).statBuckets();
 		const unsigned int htstatsize = htstats.size();
 
 		if (htstatsize >= ret.size())

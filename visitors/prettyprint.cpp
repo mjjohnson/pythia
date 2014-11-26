@@ -1233,17 +1233,17 @@ void PrettyPrinterVisitor::visit(WriteOp* op)
 void PrettyPrinterVisitor::visit(CubeOp* op) {
 	printIdent();
 	cout << "CubeOp ("
-		<< "agg-fields=" << printvecaddone(op->aggfields) 
+		<< "agg-fields=" << printvecaddone(op->aggfields[0]) 
 		<< ")" << endl; 
 
 	for (int i=0; i<MAX_THREADS; ++i)
 	{
-		if (op->hashtable.at(i).nbuckets == 0)
+		if (op->hashtables.at(i)[0].nbuckets == 0)
 			continue;
 
 		printIdent();
 		cout << ". Thread " << setw(2) << setfill('0') << i << ": ";
-		printHashTableStats(op->hashtable[i]);
+		printHashTableStats(op->hashtables[i][0]);
 	}
 
 	op->nextOp->accept(this);

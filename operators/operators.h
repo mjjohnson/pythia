@@ -444,7 +444,7 @@ class CubeOp : public virtual SingleInputOp {
 
 		void remember(void* tuple, HashTable::Iterator& it, unsigned short threadid);
 
-		vector<unsigned short> aggfields;
+		vector< vector<unsigned short> > aggfields;
 		ConjunctionEqualsEvaluator comparator;
 		TupleHasher hashfn;
 		Mode aggregationmode;
@@ -452,10 +452,15 @@ class CubeOp : public virtual SingleInputOp {
 		PThreadLockCVBarrier barrier;
 
 		/**
-		 * Either one hashtable per thread if thread-local aggregation, or 
-		 * a single hashtable if global aggregation.
+		 * Either one vector of hashtables per thread if thread-local
+		 * aggregation, or a single vector of hashtables if global
+		 * aggregation.
+		 *
+		 * The per-thread/global vector contains a hashtable per
+		 * grouping set (that is, one per combination of attributes to
+		 * group by) in the cube.
 		 */
-		vector<HashTable> hashtable;
+		vector< vector<HashTable> > hashtables;
 
 		class State {
 			public:
