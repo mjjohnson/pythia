@@ -442,7 +442,7 @@ class CubeOp : public virtual SingleInputOp {
 			Global
 		};
 
-		void remember(void* tuple, HashTable::Iterator& it, unsigned short threadid);
+		void remember(void* tuple, HashTable::Iterator& it, unsigned short threadid, int aggid);
 
 		vector< vector<unsigned short> > aggfields;
 		ConjunctionEqualsEvaluator comparator;
@@ -479,6 +479,7 @@ class CubeOp : public virtual SingleInputOp {
 				char padding2[64];
 		};
 		vector< vector<State> > states;
+		int aggid;
 
 		/** Output buffers. Class owns the memory. */
 		vector<Page*> output;

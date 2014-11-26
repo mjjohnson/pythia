@@ -121,14 +121,19 @@ void CubeOp::init(libconfig::Config& root, libconfig::Setting& cfg)
 #endif
 
 		vector<HashTable> hashtable;
-		hashtable.push_back( HashTable() );
+		for (int i=0; i<aggfields.size(); i++) {
+			hashtable.push_back( HashTable() );
+		}
 		hashtables.push_back( hashtable );
-		hashtables[0][0].init(
-			hashfn.buckets(),	// number of hash buckets
-			schema.getTupleSize()*4, // space for each bucket
-			schema.getTupleSize(),	 // size of each tuple
-			allocpolicy,			 // stripe across all
-			this);
+
+		for (int i=0; i<hashtables[0].size(); i++) {
+			hashtables[0][i].init(
+				hashfn.buckets(),	// number of hash buckets
+				schema.getTupleSize()*4, // space for each bucket
+				schema.getTupleSize(),	 // size of each tuple
+				allocpolicy,			 // stripe across all
+				this);
+		}
 
 		barrier.init(threads);
 	}
@@ -138,7 +143,9 @@ void CubeOp::init(libconfig::Config& root, libconfig::Setting& cfg)
 		for (int i=0; i<MAX_THREADS; ++i) 
 		{
 			vector<HashTable> hashtable;
-			hashtable.push_back( HashTable() );
+			for (int j=0; j<aggfields.size(); j++) {
+				hashtable.push_back( HashTable() );
+			}
 			hashtables.push_back( hashtable );
 		}
 	}
@@ -147,7 +154,9 @@ void CubeOp::init(libconfig::Config& root, libconfig::Setting& cfg)
 	{
 		output.push_back(NULL);
 		vector<State> state;
-		state.push_back( State(HashTable::Iterator()) );
+		for (int j=0; j<hashtables[i].size(); j++) {
+			state.push_back( State(HashTable::Iterator()) );
+		}
 		states.push_back( state );
 	}
 }
@@ -173,8 +182,8 @@ void CubeOp::threadInit(unsigned short threadid)
 		case Global:
 			for (int i=0; i<hashtables[0].size(); i++) {
 				hashtables[0][i].bucketclear(threadid, threads);
-				barrier.Arrive();
 			}
+			barrier.Arrive();
 			break;
 
 		default:
@@ -185,7 +194,9 @@ void CubeOp::threadInit(unsigned short threadid)
 	{
 		htid = threadid;
 	}
-	states[threadid][0] = State(hashtables[htid][0].createIterator());
+	for (int i=0; i<hashtables[htid].size(); i++) {
+	    states[htid][i] = State(hashtables[htid][i].createIterator());
+	}
 }
 
 void CubeOp::threadClose(unsigned short threadid)
@@ -231,7 +242,7 @@ void CubeOp::destroy()
 	aggregationmode = Unset;
 }
 
-void CubeOp::remember(void* tuple, HashTable::Iterator& it, unsigned short htid)
+void CubeOp::remember(void* tuple, HashTable::Iterator& it, unsigned short htid, int aggid)
 {
 	void* candidate;
 	int totalaggfields = aggfields[0].size();
@@ -242,9 +253,9 @@ void CubeOp::remember(void* tuple, HashTable::Iterator& it, unsigned short htid)
 	unsigned int h = hashfn.hash(tuple);
 	if (aggregationmode == Global)
 	{
-		hashtables[htid][0].lockbucket(h);
+		hashtables[htid][aggid].lockbucket(h);
 	}
-	hashtables[htid][0].placeIterator(it, h);
+	hashtables[htid][aggid].placeIterator(it, h);
 
 	// Scan bucket.
 	//
@@ -261,17 +272,17 @@ void CubeOp::remember(void* tuple, HashTable::Iterator& it, unsigned short htid)
 
 	// If no match found on hash chain, allocate space and add tuple.
 	//
-	candidate = hashtables[htid][0].allocate(h, this);
+	candidate = hashtables[htid][aggid].allocate(h, this);
 	for (int i=0; i<totalaggfields; ++i)
 	{
-		schema.writeData(candidate, i, inschema.calcOffset(tuple, aggfields[0][i]));
+		schema.writeData(candidate, i, inschema.calcOffset(tuple, aggfields[htid][i]));
 	}
 	foldstart(schema.calcOffset(candidate, totalaggfields), tuple);
 
 unlockandexit:
 	if (aggregationmode == Global)
 	{
-		hashtables[htid][0].unlockbucket(h);
+		hashtables[htid][aggid].unlockbucket(h);
 	}
 }
 
@@ -287,7 +298,6 @@ Operator::ResultCode CubeOp::scanStart(unsigned short threadid,
 	{
 		htid = threadid;
 	}
-	HashTable::Iterator htit = hashtables[htid][0].createIterator();
 	ResultCode rescode;
 	
 	rescode = nextOp->scanStart(threadid, indexdatapage, indexdataschema);
@@ -303,7 +313,10 @@ Operator::ResultCode CubeOp::scanStart(unsigned short threadid,
 		Page::Iterator it = in->createIterator();
 		void* tuple;
 		while ( (tuple = it.next()) ) {
-			remember(tuple, htit, htid);
+			for (int i=0; i<hashtables[htid].size(); i++) {
+				HashTable::Iterator htit = hashtables[htid][i].createIterator();
+				remember(tuple, htit, htid, i);
+			}
 		}
 	} while(result.first == Operator::Ready);
 
@@ -318,7 +331,9 @@ Operator::ResultCode CubeOp::scanStart(unsigned short threadid,
 	switch (aggregationmode)
 	{
 		case ThreadLocal:
-			states[threadid][0].bucket = 0;
+			for (int i=0; i<states[threadid].size(); i++) {
+				states[threadid][i].bucket = 0;
+			}
 			break;
 
 		case Global:
@@ -339,11 +354,15 @@ Operator::ResultCode CubeOp::scanStart(unsigned short threadid,
 				startoffset += (threadid/maxnuma) 
 					* (((hashfn.buckets()/maxnuma)/participants)*maxnuma);
 
-				states[threadid][0].bucket = startoffset;
+				for (int i=0; i<states[threadid].size(); i++) {
+					states[threadid][i].bucket = startoffset;
+				}
 			}
 			else
 			{
-				states[threadid][0].bucket = threadid;
+				for (int i=0; i<states[threadid].size(); i++) {
+					states[threadid][i].bucket = threadid;
+				}
 			}
 
 			barrier.Arrive();
@@ -354,7 +373,9 @@ Operator::ResultCode CubeOp::scanStart(unsigned short threadid,
 		default:
 			throw NotYetImplemented();
 	}
-	states[threadid][0].startoffset = states[threadid][0].bucket;
+	for (int i=0; i<states[threadid].size(); i++) {
+		states[threadid][i].startoffset = states[threadid][i].bucket;
+	}
 
 
 	unsigned int step;
@@ -368,8 +389,9 @@ Operator::ResultCode CubeOp::scanStart(unsigned short threadid,
 			step = 1;
 			break;
 	}
-	states[threadid][0].step = step;
-
+	for (int i=0; i<states[threadid].size(); i++) {
+		states[threadid][i].step = step;
+	}
 
 	unsigned int hashbuckets = hashfn.buckets();
 	unsigned int endoffset;
@@ -400,11 +422,12 @@ Operator::ResultCode CubeOp::scanStart(unsigned short threadid,
 	{
 		endoffset = hashbuckets;
 	}
-	states[threadid][0].endoffset = endoffset;
+	for (int i=0; i<states[threadid].size(); i++) {
+		states[threadid][i].endoffset = endoffset;
+		hashtables[htid][0].placeIterator(states[threadid][0].iterator,
+			states[threadid][0].bucket);
+	}
 
-
-	hashtables[htid][0].placeIterator(states[threadid][0].iterator,
-		states[threadid][0].bucket);
 
 	// If scan failed, return Error. Otherwise return what scanClose returned.
 	//
