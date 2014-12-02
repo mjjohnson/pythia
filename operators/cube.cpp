@@ -52,6 +52,7 @@ void CubeOp::init(libconfig::Config& root, libconfig::Setting& cfg)
 {
 	Operator::init(root, cfg);
 
+	aggid = 0;
 	// Read aggregation fields. This is a list of numbers (for cubing on
 	// all of the fields listed).
 	//
@@ -87,12 +88,16 @@ void CubeOp::init(libconfig::Config& root, libconfig::Setting& cfg)
 
 	// Create object for comparisons.
 	//
-	vector <unsigned short> tempvec;	// [0,1,2,...]
-	for (unsigned int i=0; i<aggfields[0].size(); ++i)
-	{
-		tempvec.push_back(i);
+	for (int j=0; j<aggfields.size(); j++) {
+		vector <unsigned short> tempvec;	// [0,1,2,...]
+		ConjunctionEqualsEvaluator comparator;
+		for (unsigned int i=0; i<aggfields[j].size(); ++i)
+		{
+			tempvec.push_back(i);
+		}
+		comparator.init(schema, nextOp->getOutSchema(), tempvec, aggfields[j]);
+		comparators.push_back(comparator);
 	}
-	comparator.init(schema, nextOp->getOutSchema(), tempvec, aggfields[0]);
 
 	assert(aggregationmode == Unset);
 
@@ -175,7 +180,7 @@ void CubeOp::threadInit(unsigned short threadid)
 					schema.getTupleSize(),	 // size of each tuple
 					vector<char>(),	  // always allocate locally
 					this);
-				hashtables[threadid][0].bucketclear(0, 1);
+				hashtables[threadid][i].bucketclear(0, 1);
 				}
 			break;
 
@@ -264,7 +269,7 @@ void CubeOp::remember(void* tuple, HashTable::Iterator& it, unsigned short htid,
 		// Compare keys of tuple stored in hash chain with input tuple.
 		// If match found, increment count and return immediately.
 		//
-		if (comparator.eval(candidate, tuple)) {
+		if (comparators[aggid].eval(candidate, tuple)) {
 			fold(schema.calcOffset(candidate, totalaggfields), tuple);
 			goto unlockandexit;
 		}
@@ -331,8 +336,8 @@ Operator::ResultCode CubeOp::scanStart(unsigned short threadid,
 	switch (aggregationmode)
 	{
 		case ThreadLocal:
-			for (int i=0; i<states[threadid].size(); i++) {
-				states[threadid][i].bucket = 0;
+			for (int i=0; i<states[htid].size(); i++) {
+				states[htid][i].bucket = 0;
 			}
 			break;
 
@@ -354,14 +359,14 @@ Operator::ResultCode CubeOp::scanStart(unsigned short threadid,
 				startoffset += (threadid/maxnuma) 
 					* (((hashfn.buckets()/maxnuma)/participants)*maxnuma);
 
-				for (int i=0; i<states[threadid].size(); i++) {
-					states[threadid][i].bucket = startoffset;
+				for (int i=0; i<states[htid].size(); i++) {
+					states[htid][i].bucket = startoffset;
 				}
 			}
 			else
 			{
-				for (int i=0; i<states[threadid].size(); i++) {
-					states[threadid][i].bucket = threadid;
+				for (int i=0; i<states[htid].size(); i++) {
+					states[htid][i].bucket = threadid;
 				}
 			}
 
@@ -424,8 +429,8 @@ Operator::ResultCode CubeOp::scanStart(unsigned short threadid,
 	}
 	for (int i=0; i<states[threadid].size(); i++) {
 		states[threadid][i].endoffset = endoffset;
-		hashtables[htid][0].placeIterator(states[threadid][0].iterator,
-			states[threadid][0].bucket);
+		hashtables[htid][i].placeIterator(states[threadid][i].iterator,
+			states[threadid][i].bucket);
 	}
 
 
@@ -438,10 +443,6 @@ Operator::GetNextResultT CubeOp::getNext(unsigned short threadid)
 {
 	void* tuple;
 
-	// Restore iterator from saved state.
-	//
-	HashTable::Iterator& it = states[threadid][0].iterator;
-
 	Page* out = output[threadid];
 	out->clear();
 
@@ -451,53 +452,61 @@ Operator::GetNextResultT CubeOp::getNext(unsigned short threadid)
 		htid = threadid;
 	}
 
-	const unsigned int endoffset = states[threadid][0].endoffset;
-	const unsigned int step = states[threadid][0].step;
+	for (int j=aggid; j<states[htid].size(); j++) {
+		aggid = j;
 
-	for (unsigned int i=states[threadid][0].bucket; i<endoffset; i+=step)
-	{
-		// Output aggregates, page-by-page.
+		// Restore iterator from saved state.
 		//
-		while ( (tuple = it.next()) ) 
+		HashTable::Iterator& it = states[threadid][aggid].iterator;
+
+		unsigned int endoffset = states[htid][aggid].endoffset;
+		unsigned int step = states[htid][aggid].step;
+
+		for (unsigned int i=states[htid][j].bucket; i<endoffset; i+=step)
 		{
+			// Output aggregates, page-by-page.
+			//
+			while ( (tuple = it.next()) ) 
+			{
 #ifdef DEBUG2
 #ifdef ENABLE_NUMA
 #warning Hardcoded NUMA socket number.
-			unsigned int maxnuma = 4;
-// Disabled for perf.
-//			unsigned int maxnuma = numa_max_node() + 1;
+				unsigned int maxnuma = 4;
+	// Disabled for perf.
+	//			unsigned int maxnuma = numa_max_node() + 1;
 #else
-			unsigned int maxnuma = 1;
+				unsigned int maxnuma = 1;
 #endif
-			if (threads >= maxnuma)
-			{
-				assertaddresslocal(tuple);
-			}
+				if (threads >= maxnuma)
+				{
+					assertaddresslocal(tuple);
+				}
 #endif
 
-			// Do copy to output buffer.
+				// Do copy to output buffer.
+				//
+				void* dest = out->allocateTuple();
+				dbgassert(out->isValidTupleAddress(dest));
+				schema.copyTuple(dest, tuple);
+
+				// If output buffer full, record state and return.
+				// 
+				if (!out->canStoreTuple()) {
+					states[htid][j].bucket = i; 
+					return make_pair(Ready, out);
+				}
+			}
+
+			// Making iterator wrap-around so as to avoid past-the-end placement.
 			//
-			void* dest = out->allocateTuple();
-			dbgassert(out->isValidTupleAddress(dest));
-			schema.copyTuple(dest, tuple);
-
-			// If output buffer full, record state and return.
-			// 
-			if (!out->canStoreTuple()) {
-				states[threadid][0].bucket = i; 
-				return make_pair(Ready, out);
+			if ((i+step) < endoffset)
+			{
+				hashtables[htid][j].placeIterator(it, (i+step));
 			}
-		}
-
-		// Making iterator wrap-around so as to avoid past-the-end placement.
-		//
-		if ((i+step) < endoffset)
-		{
-			hashtables[htid][0].placeIterator(it, (i+step));
-		}
-		else
-		{
-			hashtables[htid][0].placeIterator(it, 0);
+			else
+			{
+				hashtables[htid][j].placeIterator(it, 0);
+			}
 		}
 	}
 
