@@ -278,7 +278,7 @@ void CubeOp::remember(void* tuple, HashTable::Iterator& it, unsigned short htid,
 	// If no match found on hash chain, allocate space and add tuple.
 	//
 	candidate = hashtables[htid][aggid].allocate(h, this);
-	for (int i=0; i<totalaggfields; ++i)
+	for (int i=0; i<totalaggfields-aggid; ++i)
 	{
 		schema.writeData(candidate, i, inschema.calcOffset(tuple, aggfields[htid][i]));
 	}
