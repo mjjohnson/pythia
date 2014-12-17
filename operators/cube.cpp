@@ -61,12 +61,18 @@ void CubeOp::init(libconfig::Config& root, libconfig::Setting& cfg)
 	for (int i=field.getLength()-1; i>=0; --i)
 	{
 	    vector<unsigned short> fields;
+	    vector<bool> alls;
 	    for (int j=0; j<=i; ++j)
 	    {
 		int fieldno = field[j];
 		fields.push_back(fieldno);
+		alls.push_back(true);
+	    }
+	    for (int j=i+1; j<field.getLength(); ++j) {
+		alls.push_back(false);
 	    }
 	    aggfields.push_back(fields);
+	    allfields.push_back(alls);
 	}
 
 	// Read user-defined schema.
@@ -278,9 +284,11 @@ void CubeOp::remember(void* tuple, HashTable::Iterator& it, unsigned short htid,
 	// If no match found on hash chain, allocate space and add tuple.
 	//
 	candidate = hashtables[htid][aggid].allocate(h, this);
-	for (int i=0; i<totalaggfields-aggid; ++i)
+	for (int i=0; i<totalaggfields; ++i)
 	{
-		schema.writeData(candidate, i, inschema.calcOffset(tuple, aggfields[htid][i]));
+		if (allfields[aggid][i]) {
+			schema.writeData(candidate, i, inschema.calcOffset(tuple, aggfields[htid][i]));
+		}
 	}
 	foldstart(schema.calcOffset(candidate, totalaggfields), tuple);
 

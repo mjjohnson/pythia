@@ -445,6 +445,7 @@ class CubeOp : public virtual SingleInputOp {
 		void remember(void* tuple, HashTable::Iterator& it, unsigned short threadid, int aggid);
 
 		vector< vector<unsigned short> > aggfields;
+		vector< vector<bool> > allfields;
 		vector<ConjunctionEqualsEvaluator> comparators;
 		TupleHasher hashfn;
 		Mode aggregationmode;
