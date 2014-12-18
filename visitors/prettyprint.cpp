@@ -1249,3 +1249,41 @@ void PrettyPrinterVisitor::visit(CubeOp* op) {
 	op->nextOp->accept(this);
 }
 
+void PrettyPrinterVisitor::visit(CubeSum* op) {
+	printIdent();
+	cout << "CubeSum ("
+		<< "agg-fields=" << printvecaddone(op->aggfields[0]) 
+		<< ")" << endl; 
+
+	for (int i=0; i<MAX_THREADS; ++i)
+	{
+		if (op->hashtables.at(i)[0].nbuckets == 0)
+			continue;
+
+		printIdent();
+		cout << ". Thread " << setw(2) << setfill('0') << i << ": ";
+		printHashTableStats(op->hashtables[i][0]);
+	}
+
+	op->nextOp->accept(this);
+}
+
+void PrettyPrinterVisitor::visit(CubeCount* op) {
+	printIdent();
+	cout << "CubeCount ("
+		<< "agg-fields=" << printvecaddone(op->aggfields[0]) 
+		<< ")" << endl; 
+
+	for (int i=0; i<MAX_THREADS; ++i)
+	{
+		if (op->hashtables.at(i)[0].nbuckets == 0)
+			continue;
+
+		printIdent();
+		cout << ". Thread " << setw(2) << setfill('0') << i << ": ";
+		printHashTableStats(op->hashtables[i][0]);
+	}
+
+	op->nextOp->accept(this);
+}
+

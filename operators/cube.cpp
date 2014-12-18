@@ -571,7 +571,7 @@ vector<unsigned int> CubeOp::statAggBuckets()
 
 	return ret;
 }
-
+#if 0
 Schema& CubeOp::foldinit(libconfig::Config& root, libconfig::Setting& cfg)
 {
 	sumfieldno = cfg["sumfield"];
@@ -643,4 +643,4 @@ void CubeOp::fold(void* partialresult, void* tuple)
 			break;
 	};
 }
-
+#endif

@@ -7,7 +7,7 @@ CPPFLAGS+=-Idist/include/
 
 CXXFLAGS+=-g 
 #CXXFLAGS+=-O0 -Wall
-CXXFLAGS+=-O3 -Wall
+CXXFLAGS+=-O0 -Wall
 
 LDFLAGS+=-Ldist/lib/
 LDLIBS+=-lconfig++ -lpthread -lrt -lbz2
@@ -88,6 +88,8 @@ FILES = schema.o hash.o \
 	operators/indexjoin.o \
 	operators/write.o \
 	operators/cube.o \
+	operators/cubesum.o \
+	operators/cubecount.o \
 
 ifneq ($(findstring ENABLE_HDF5,$(CPPFLAGS)),)
 FILES += \

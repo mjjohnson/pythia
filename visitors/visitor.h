@@ -7,7 +7,8 @@
  * modification, are permitted provided that the following conditions
  * are met:
  * 
- * 1. Redistributions of source code must retain the above copyrCube * notice, this list of conditions and the following disclaimer.
+ * 1. Redistributions of source code must retain the above copyright
+ * notice, this list of conditions and the following disclaimer.
  * 
  * 2. Redistributions in binary form must reproduce the above copyright
  * notice, this list of conditions and the following disclaimer in the
@@ -81,6 +82,8 @@ class FastBitScanOp;
 #endif
 class WriteOp;
 class CubeOp;
+class CubeSum;
+class CubeCount;
 
 class Visitor {
 	public:
@@ -130,7 +133,9 @@ class Visitor {
 		virtual void visit(FastBitScanOp* op) = 0;
 #endif
 		virtual void visit(WriteOp* op) = 0;
-		virtual void visit(CubeOp* op) = 0;
+//		virtual void visit(CubeOp* op) = 0;
+		virtual void visit(CubeSum* op) = 0;
+		virtual void visit(CubeCount* op) = 0;
 
 		virtual ~Visitor() { }
 };

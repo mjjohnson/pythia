@@ -93,7 +93,8 @@ class SimpleVisitor : public Visitor {
 		void visit(FastBitScanOp* op) { this->simplevisit(op); }
 #endif
 		void visit(WriteOp* op) { this->simplevisit(op); }
-		void visit(CubeOp* op) { this->simplevisit(op); }
+		void visit(CubeSum* op) { this->simplevisit(op); }
+		void visit(CubeCount* op) { this->simplevisit(op); }
 };
 
 class RecursiveDestroyVisitor : public SimpleVisitor {
@@ -185,6 +186,8 @@ class PrettyPrinterVisitor : public Visitor {
 		void visit(IntGeneratorOp* op);
 		void visit(WriteOp* op);
 		void visit(CubeOp* op);
+		void visit(CubeSum* op);
+		void visit(CubeCount* op);
 
 	private:
 		void printSortMergeJoin(SortMergeJoinOp* op);

@@ -203,8 +203,10 @@ void constructsubtree(
 			tmp = new PartitionOp();
 		else if (type == "write")
 			tmp = new WriteOp();
-		else if (type == "cube")
-			tmp = new CubeOp();
+		else if (type == "cube_sum")
+			tmp = new CubeSum();
+		else if (type == "cube_count")
+			tmp = new CubeCount();
 		else
 		{
 			// It's a user-defined type?

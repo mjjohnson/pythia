@@ -405,13 +405,13 @@ class CubeOp : public virtual SingleInputOp {
 		/**
 		 * Returns reference to user-defined aggregation schema.
 		 */
-		virtual Schema& foldinit(libconfig::Config& root, libconfig::Setting& node);
+		virtual Schema& foldinit(libconfig::Config& root, libconfig::Setting& node) = 0;
 
 		/**
 		 * Called when a new fold starts. \a output is guaranteed to be as
 		 * wide as the user-defined schema returned from \a foldinit.
 		 */
-		virtual void foldstart(void* output, void* tuple);
+		virtual void foldstart(void* output, void* tuple) = 0;
 
 		/**
 		 * Reads the partial result in \a partialresult and the current 
@@ -419,7 +419,7 @@ class CubeOp : public virtual SingleInputOp {
 		 * \a partialresult. \a partialresult is as wide as the user-defined
 		 * schema returned from \a foldinit.
 		 */
-		virtual void fold(void* partialresult, void* tuple);
+		virtual void fold(void* partialresult, void* tuple) = 0;
 
 		/**
 		 * Aggregates bucket utilization statistics from all hash tables, as
@@ -485,10 +485,40 @@ class CubeOp : public virtual SingleInputOp {
 
 		/** Output buffers. Class owns the memory. */
 		vector<Page*> output;
+};
+
+class CubeSum : public CubeOp {
+	public:
+		friend class PrettyPrinterVisitor;
+
+		virtual void accept(Visitor* v) { v->visit(this); }
+
+		virtual Schema& foldinit(libconfig::Config& root, libconfig::Setting& node);
+		virtual void foldstart(void* output, void* tuple);
+		virtual void fold(void* partialresult, void* tuple);
+
+	private:
 		Schema aggregateschema;
 		unsigned int sumfieldno;
 		Schema inschema;
+
 };
+
+class CubeCount : public CubeOp {
+	public:
+		friend class PrettyPrinterVisitor;
+
+		virtual void accept(Visitor* v) { v->visit(this); }
+
+		virtual Schema& foldinit(libconfig::Config& root, libconfig::Setting& node);
+		virtual void foldstart(void* output, void* tuple);
+		virtual void fold(void* partialresult, void* tuple);
+
+	private:
+		Schema aggregatecountschema;
+
+};
+
 
 class DualInputOp : public virtual Operator {
 	public:
