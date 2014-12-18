@@ -58,21 +58,27 @@ void CubeOp::init(libconfig::Config& root, libconfig::Setting& cfg)
 	//
 	libconfig::Setting& field = cfg["fields"];
 	dbgassert(field.isAggregate());
-	for (int i=field.getLength()-1; i>=0; --i)
-	{
-	    vector<unsigned short> fields;
-	    vector<bool> alls;
-	    for (int j=0; j<=i; ++j)
-	    {
-		int fieldno = field[j];
-		fields.push_back(fieldno);
-		alls.push_back(true);
+
+	totalaggfields = field.getLength();
+
+	int last_permutation = 1 << totalaggfields;
+	for (int i=0; i<last_permutation; ++i) {
+	    vector<unsigned short> alls;
+	    for (int j=0; j<totalaggfields; j++) {
+		bool bit_set = !!(i & (1 << j));
+		alls.push_back(bit_set);
 	    }
-	    for (int j=i+1; j<field.getLength(); ++j) {
-		alls.push_back(false);
+	    allfields.push_back(alls);
+	}
+	for (int i=0; i<last_permutation; ++i) {
+	    vector<unsigned short> fields;
+	    for (int j=0; j<totalaggfields; j++) {
+		if (allfields[i][j]) {
+		    int fieldno = field[j];
+		    fields.push_back(fieldno);
+		}
 	    }
 	    aggfields.push_back(fields);
-	    allfields.push_back(alls);
 	}
 
 	// Read user-defined schema.
@@ -82,9 +88,9 @@ void CubeOp::init(libconfig::Config& root, libconfig::Setting& cfg)
 
 	// Get data type of aggregation attributes, then add user-defined schema.
 	//
-	for (unsigned int i=0; i<aggfields[0].size(); ++i)
+	for (unsigned int i=0; i<totalaggfields; ++i)
 	{
-		ColumnSpec cs = nextOp->getOutSchema().get(aggfields[0][i]);
+		ColumnSpec cs = nextOp->getOutSchema().get(field[i]);
 		schema.add(cs);
 	}
 	for (unsigned int i=0; i<uds.columns(); ++i)
@@ -97,9 +103,11 @@ void CubeOp::init(libconfig::Config& root, libconfig::Setting& cfg)
 	for (int j=0; j<aggfields.size(); j++) {
 		vector <unsigned short> tempvec;	// [0,1,2,...]
 		ConjunctionEqualsEvaluator comparator;
-		for (unsigned int i=0; i<aggfields[j].size(); ++i)
+		for (unsigned int i=0; i<totalaggfields; ++i)
 		{
-			tempvec.push_back(i);
+			if (allfields[j][i]) {
+				tempvec.push_back(i);
+			}
 		}
 		comparator.init(schema, nextOp->getOutSchema(), tempvec, aggfields[j]);
 		comparators.push_back(comparator);
@@ -255,13 +263,33 @@ void CubeOp::destroy()
 
 void CubeOp::remember(void* tuple, HashTable::Iterator& it, unsigned short htid, int aggid)
 {
+	void* tuple_copy = malloc(schema.getTupleSize());
+	if (!tuple_copy) {
+	    cerr << "Couldn't allocate memory for copy of tuple.";
+	    exit(1);
+	}
 	void* candidate;
-	int totalaggfields = aggfields[0].size();
+	int j = 0;
+	const long long zero = 0;
+
 	Schema& inschema = nextOp->getOutSchema();
+
+	// Copy this tuple so we don't modify the original
+	for (int i=0; i<schema.columns(); ++i)
+	{
+		schema.writeData(tuple_copy, i, inschema.calcOffset(tuple, i));
+	}
+	// Zero out the unwanted columns so that we look up the correct bucket
+	for (int i=0; i<totalaggfields; ++i)
+	{
+		if (!allfields[aggid][i]) {
+			schema.writeData(tuple_copy, i, &zero);
+		}
+	}
 
 	// Identify key and hash it to find the hashtable bucket.
 	//
-	unsigned int h = hashfn.hash(tuple);
+	unsigned int h = hashfn.hash(tuple_copy);
 	if (aggregationmode == Global)
 	{
 		hashtables[htid][aggid].lockbucket(h);
@@ -275,24 +303,26 @@ void CubeOp::remember(void* tuple, HashTable::Iterator& it, unsigned short htid,
 		// Compare keys of tuple stored in hash chain with input tuple.
 		// If match found, increment count and return immediately.
 		//
-		if (comparators[aggid].eval(candidate, tuple)) {
-			fold(schema.calcOffset(candidate, totalaggfields), tuple);
+		if (comparators[aggid].eval(candidate, tuple_copy)) {
+			fold(schema.calcOffset(candidate, totalaggfields), tuple_copy);
 			goto unlockandexit;
 		}
 	}
 
 	// If no match found on hash chain, allocate space and add tuple.
-	//
+	j = 0;
 	candidate = hashtables[htid][aggid].allocate(h, this);
 	for (int i=0; i<totalaggfields; ++i)
 	{
 		if (allfields[aggid][i]) {
-			schema.writeData(candidate, i, inschema.calcOffset(tuple, aggfields[htid][i]));
+			schema.writeData(candidate, i, inschema.calcOffset(tuple_copy, aggfields[aggid][j]));
+			j++;
 		}
 	}
-	foldstart(schema.calcOffset(candidate, totalaggfields), tuple);
+	foldstart(schema.calcOffset(candidate, totalaggfields), tuple_copy);
 
 unlockandexit:
+	free(tuple_copy);
 	if (aggregationmode == Global)
 	{
 		hashtables[htid][aggid].unlockbucket(h);
