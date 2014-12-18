@@ -113,60 +113,14 @@ void CubeOp::init(libconfig::Config& root, libconfig::Setting& cfg)
 		comparators.push_back(comparator);
 	}
 
-	assert(aggregationmode == Unset);
-
 	hashfn = TupleHasher::create(nextOp->getOutSchema(), cfg["hash"]);
-	if (cfg.exists("global"))
+	for (int i=0; i<MAX_THREADS; ++i) 
 	{
-		aggregationmode = Global;
-
-		int thr = cfg["threads"];
-		threads = thr;
-
-		vector<char> allocpolicy;
-
-#ifdef ENABLE_NUMA
-		int maxnuma = numa_max_node() + 1;
-
-		// Stripe on all NUMA nodes.
-		//
-		for (char i=0; i<maxnuma; ++i)
-		{
-			allocpolicy.push_back(i);
-		}
-#else
-		cerr << " ** NUMA POLICY WARNING: Memory policy is ignored, "
-			<< "NUMA disabled at compile." << endl;
-#endif
-
 		vector<HashTable> hashtable;
-		for (int i=0; i<aggfields.size(); i++) {
+		for (int j=0; j<aggfields.size(); j++) {
 			hashtable.push_back( HashTable() );
 		}
 		hashtables.push_back( hashtable );
-
-		for (int i=0; i<hashtables[0].size(); i++) {
-			hashtables[0][i].init(
-				hashfn.buckets(),	// number of hash buckets
-				schema.getTupleSize()*4, // space for each bucket
-				schema.getTupleSize(),	 // size of each tuple
-				allocpolicy,			 // stripe across all
-				this);
-		}
-
-		barrier.init(threads);
-	}
-	else
-	{
-		aggregationmode = ThreadLocal;
-		for (int i=0; i<MAX_THREADS; ++i) 
-		{
-			vector<HashTable> hashtable;
-			for (int j=0; j<aggfields.size(); j++) {
-				hashtable.push_back( HashTable() );
-			}
-			hashtables.push_back( hashtable );
-		}
 	}
 
 	for (int i=0; i<MAX_THREADS; ++i) 
@@ -184,35 +138,17 @@ void CubeOp::threadInit(unsigned short threadid)
 {
 	void* space = numaallocate_local("GnAg", sizeof(Page), this);
 	output[threadid] = new(space) Page(buffsize, schema.getTupleSize(), this);
-	switch(aggregationmode)
-	{
-		case ThreadLocal:
-			for (int i=0; i<hashtables[threadid].size(); i++) {
-				hashtables[threadid][i].init(
-					hashfn.buckets(),	// number of hash buckets
-					schema.getTupleSize()*4, // space for each bucket
-					schema.getTupleSize(),	 // size of each tuple
-					vector<char>(),	  // always allocate locally
-					this);
-				hashtables[threadid][i].bucketclear(0, 1);
-				}
-			break;
-
-		case Global:
-			for (int i=0; i<hashtables[0].size(); i++) {
-				hashtables[0][i].bucketclear(threadid, threads);
-			}
-			barrier.Arrive();
-			break;
-
-		default:
-			throw NotYetImplemented();
+	for (int i=0; i<hashtables[threadid].size(); i++) {
+		hashtables[threadid][i].init(
+			hashfn.buckets(),	// number of hash buckets
+			schema.getTupleSize()*4, // space for each bucket
+			schema.getTupleSize(),	 // size of each tuple
+			vector<char>(),	  // always allocate locally
+			this);
+		hashtables[threadid][i].bucketclear(0, 1);
 	}
-	unsigned short htid = 0;
-	if (aggregationmode == ThreadLocal)
-	{
-		htid = threadid;
-	}
+
+	unsigned short htid = threadid;
 	for (int i=0; i<hashtables[htid].size(); i++) {
 	    states[htid][i] = State(hashtables[htid][i].createIterator());
 	}
@@ -225,40 +161,19 @@ void CubeOp::threadClose(unsigned short threadid)
 	}
 	output[threadid] = NULL;
 
-	switch(aggregationmode)
-	{
-		case ThreadLocal:
-			for (int i=0; i<hashtables[threadid].size(); i++) {
-				hashtables[threadid][i].bucketclear(0, 1);
-				hashtables[threadid][i].destroy();
-			}
-			break;
-
-		case Global:
-			barrier.Arrive();
-			for (int i=0; i<hashtables[0].size(); i++) {
-				hashtables[0][i].bucketclear(threadid, threads);
-			}
-			break;
-
-		default:
-			throw NotYetImplemented();
+	for (int i=0; i<hashtables[threadid].size(); i++) {
+		hashtables[threadid][i].bucketclear(0, 1);
+		hashtables[threadid][i].destroy();
 	}
 }
 
 void CubeOp::destroy()
 {
-	if (aggregationmode == Global) {
-		for (int i=0; i<hashtables[0].size(); i++) {
-			hashtables[0][i].destroy();
-		}
-	}
 	hashfn.destroy();
 	for (int i=0; i<hashtables.size(); i++) {
 		hashtables[i].clear();
 	}
 	hashtables.clear();
-	aggregationmode = Unset;
 }
 
 void CubeOp::remember(void* tuple, HashTable::Iterator& it, unsigned short htid, int aggid)
@@ -290,10 +205,6 @@ void CubeOp::remember(void* tuple, HashTable::Iterator& it, unsigned short htid,
 	// Identify key and hash it to find the hashtable bucket.
 	//
 	unsigned int h = hashfn.hash(tuple_copy);
-	if (aggregationmode == Global)
-	{
-		hashtables[htid][aggid].lockbucket(h);
-	}
 	hashtables[htid][aggid].placeIterator(it, h);
 
 	// Scan bucket.
@@ -323,10 +234,6 @@ void CubeOp::remember(void* tuple, HashTable::Iterator& it, unsigned short htid,
 
 unlockandexit:
 	free(tuple_copy);
-	if (aggregationmode == Global)
-	{
-		hashtables[htid][aggid].unlockbucket(h);
-	}
 }
 
 Operator::ResultCode CubeOp::scanStart(unsigned short threadid,
@@ -336,11 +243,7 @@ Operator::ResultCode CubeOp::scanStart(unsigned short threadid,
 	//
 	Page* in;
 	Operator::GetNextResultT result; 
-	unsigned short htid = 0;
-	if (aggregationmode == ThreadLocal)
-	{
-		htid = threadid;
-	}
+	unsigned short htid = threadid;
 	ResultCode rescode;
 	
 	rescode = nextOp->scanStart(threadid, indexdatapage, indexdataschema);
@@ -371,100 +274,22 @@ Operator::ResultCode CubeOp::scanStart(unsigned short threadid,
 	unsigned int maxnuma = 1;
 #endif
 
-	switch (aggregationmode)
-	{
-		case ThreadLocal:
-			for (int i=0; i<states[htid].size(); i++) {
-				states[htid][i].bucket = 0;
-			}
-			break;
-
-		case Global:
-			{
-			if (threads > maxnuma)
-			{
-				// Threads from this NUMA node participating 
-				//
-				unsigned int participants = threads/maxnuma;
-				if ((threadid % maxnuma) < (threads % maxnuma))
-				{
-					participants++;
-				}
-
-				// Compute offset
-				//
-				unsigned int startoffset = threadid % maxnuma;
-				startoffset += (threadid/maxnuma) 
-					* (((hashfn.buckets()/maxnuma)/participants)*maxnuma);
-
-				for (int i=0; i<states[htid].size(); i++) {
-					states[htid][i].bucket = startoffset;
-				}
-			}
-			else
-			{
-				for (int i=0; i<states[htid].size(); i++) {
-					states[htid][i].bucket = threadid;
-				}
-			}
-
-			barrier.Arrive();
-
-			break;
-			}
-
-		default:
-			throw NotYetImplemented();
+	for (int i=0; i<states[htid].size(); i++) {
+		states[htid][i].bucket = 0;
 	}
+
 	for (int i=0; i<states[threadid].size(); i++) {
 		states[threadid][i].startoffset = states[threadid][i].bucket;
 	}
 
 
-	unsigned int step;
-	switch (aggregationmode)
-	{
-		case Global:
-			step = (threads > maxnuma) ? maxnuma : threads;
-			break;
-
-		default:
-			step = 1;
-			break;
-	}
+	unsigned int step = 1;
 	for (int i=0; i<states[threadid].size(); i++) {
 		states[threadid][i].step = step;
 	}
 
 	unsigned int hashbuckets = hashfn.buckets();
-	unsigned int endoffset;
-	if (aggregationmode == Global)
-	{
-		if (threadid >= (threads - maxnuma))
-		{
-			endoffset = hashbuckets;
-		}
-		else
-		{
-			// Threads from this NUMA node participating 
-			//
-			unsigned int participants = threads/maxnuma;
-			if ((threadid % maxnuma) < (threads % maxnuma))
-			{
-				participants++;
-			}
-
-			// Compute offset
-			//
-			endoffset = (threadid % maxnuma);
-			endoffset += ((threadid+maxnuma)/maxnuma)
-						* (((hashbuckets/maxnuma)/participants)*maxnuma);
-		}
-	}
-	else
-	{
-		endoffset = hashbuckets;
-	}
+	unsigned int endoffset = hashbuckets;
 	for (int i=0; i<states[threadid].size(); i++) {
 		states[threadid][i].endoffset = endoffset;
 		hashtables[htid][i].placeIterator(states[threadid][i].iterator,
@@ -484,11 +309,7 @@ Operator::GetNextResultT CubeOp::getNext(unsigned short threadid)
 	Page* out = output[threadid];
 	out->clear();
 
-	unsigned short htid = 0;
-	if (aggregationmode == ThreadLocal)
-	{
-		htid = threadid;
-	}
+	unsigned short htid = threadid;
 
 	for (int j=aggid; j<states[htid].size(); j++) {
 		aggid = j;
@@ -571,76 +392,4 @@ vector<unsigned int> CubeOp::statAggBuckets()
 
 	return ret;
 }
-#if 0
-Schema& CubeOp::foldinit(libconfig::Config& root, libconfig::Setting& cfg)
-{
-	sumfieldno = cfg["sumfield"];
-	inschema = nextOp->getOutSchema();
 
-	// Assert we sum numeric types.
-	//
-	assert(inschema.getColumnType(sumfieldno) == CT_DECIMAL
-			|| inschema.getColumnType(sumfieldno) == CT_INTEGER
-			|| inschema.getColumnType(sumfieldno) == CT_LONG);
-
-	aggregateschema = Schema();
-	aggregateschema.add(inschema.getColumnType(sumfieldno));
-	return aggregateschema;
-}
-
-void CubeOp::foldstart(void* output, void* tuple)
-{
-	switch (aggregateschema.getColumnType(0))
-	{
-		case CT_INTEGER:
-		{
-			CtInt val = inschema.asInt(tuple, sumfieldno);
-			*(CtInt*)output = val;
-			break;
-		}
-		case CT_LONG:
-		{
-			CtLong val = inschema.asLong(tuple, sumfieldno);
-			*(CtLong*)output = val;
-			break;
-		}
-		case CT_DECIMAL:
-		{
-			CtDecimal val = inschema.asDecimal(tuple, sumfieldno);
-			*(CtDecimal*)output = val;
-			break;
-		}
-		default:
-			throw NotYetImplemented();
-			break;
-	};
-}
-
-void CubeOp::fold(void* partialresult, void* tuple)
-{
-	switch (aggregateschema.getColumnType(0))
-	{
-		case CT_INTEGER:
-		{
-			CtInt nextval = inschema.asInt(tuple, sumfieldno);
-			*(CtInt*)partialresult += nextval;
-			break;
-		}
-		case CT_LONG:
-		{
-			CtLong nextval = inschema.asLong(tuple, sumfieldno);
-			*(CtLong*)partialresult += nextval;
-			break;
-		}
-		case CT_DECIMAL:
-		{
-			CtDecimal nextval = inschema.asDecimal(tuple, sumfieldno);
-			*(CtDecimal*)partialresult += nextval;
-			break;
-		}
-		default:
-			throw NotYetImplemented();
-			break;
-	};
-}
-#endif
